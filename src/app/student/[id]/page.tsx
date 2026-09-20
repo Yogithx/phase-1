@@ -2,14 +2,19 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { createSupabaseServer } from '@/lib/supabase-server';
 import AssignInterventionModal from '@/components/AssignInterventionModal';
+import { calculateRiskScore } from '@/lib/riskEngine';
 import {
   ArrowLeft, User, BookOpen, TrendingUp, TrendingDown,
   Minus, AlertTriangle, Activity, Calendar, CheckCircle2,
-  Clock, Brain, Lightbulb, FileText, BarChart2,
+  Clock, Brain, Lightbulb, FileText, BarChart2, ShieldAlert,
 } from 'lucide-react';
+
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 type RiskTier = 'GREEN' | 'AMBER' | 'RED' | 'CRITICAL';
 type RiskTrajectory = 'improving' | 'stable' | 'deteriorating';
+
+// ─── Colour maps ───────────────────────────────────────────────────────────────
 
 const TIER_BADGE: Record<RiskTier, string> = {
   GREEN:    'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
@@ -21,6 +26,8 @@ const TIER_BADGE: Record<RiskTier, string> = {
 const TIER_BAR: Record<RiskTier, string> = {
   GREEN: 'bg-emerald-500', AMBER: 'bg-amber-500', RED: 'bg-red-500', CRITICAL: 'bg-red-600',
 };
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function avg(nums: number[]) {
   if (!nums.length) return null;
@@ -43,6 +50,8 @@ function trendColor(diff: number | null) {
   return 'text-slate-400';
 }
 
+// ─── Metric card ──────────────────────────────────────────────────────────────
+
 function MetricCard({
   label, value, unit = '', prevValue, prevLabel, icon, alert,
 }: {
@@ -61,7 +70,7 @@ function MetricCard({
       </div>
       <div className="flex items-end gap-2">
         <span className={`text-3xl font-extrabold ${alert ? 'text-red-300' : 'text-white'}`}>
-          {value ?? '\u2014'}{value !== null ? unit : ''}
+          {value ?? '—'}{value !== null ? unit : ''}
         </span>
         {diff !== null && (
           <span className={`text-sm font-semibold mb-0.5 flex items-center gap-0.5 ${trendColor(diff)}`}>
@@ -82,6 +91,8 @@ function MetricCard({
   );
 }
 
+// ─── Section wrapper ──────────────────────────────────────────────────────────
+
 function Section({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode;
 }) {
@@ -97,11 +108,13 @@ function Section({ title, icon, children }: {
   );
 }
 
+// ─── Trajectory display ───────────────────────────────────────────────────────
+
 function TrajectoryBadge({ trajectory }: { trajectory: RiskTrajectory }) {
   const cfg = {
-    improving:    { icon: <TrendingUp className="w-4 h-4" />,    cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30', label: '\u2191 Improving' },
-    stable:       { icon: <Minus className="w-4 h-4" />,          cls: 'text-slate-300   bg-slate-500/10   border-slate-500/30',   label: '\u2192 Stable' },
-    deteriorating:{ icon: <TrendingDown className="w-4 h-4" />,  cls: 'text-red-300    bg-red-500/10    border-red-500/30',     label: '\u2193 Deteriorating' },
+    improving:    { icon: <TrendingUp className="w-4 h-4" />,    cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30', label: '↑ Improving' },
+    stable:       { icon: <Minus className="w-4 h-4" />,          cls: 'text-slate-300   bg-slate-500/10   border-slate-500/30',   label: '→ Stable' },
+    deteriorating:{ icon: <TrendingDown className="w-4 h-4" />,  cls: 'text-red-300    bg-red-500/10    border-red-500/30',     label: '↓ Deteriorating' },
   }[trajectory];
 
   return (
@@ -111,6 +124,8 @@ function TrajectoryBadge({ trajectory }: { trajectory: RiskTrajectory }) {
     </div>
   );
 }
+
+// ─── Intervention history row ─────────────────────────────────────────────────
 
 function InterventionRow({ iv }: { iv: {
   id: number; type: string; status: string;
@@ -130,7 +145,7 @@ function InterventionRow({ iv }: { iv: {
         <div className="text-sm font-semibold text-white">{iv.type}</div>
         <div className="text-xs text-slate-500 mt-0.5">
           Assigned: {new Date(iv.created_at).toLocaleDateString()}
-          {iv.due_date && ` \u00b7 Due: ${iv.due_date}`}
+          {iv.due_date && ` · Due: ${iv.due_date}`}
         </div>
         {iv.outcome && (
           <div className="text-xs text-slate-400 mt-1">Outcome: {iv.outcome}</div>
@@ -142,6 +157,8 @@ function InterventionRow({ iv }: { iv: {
     </div>
   );
 }
+
+// ─── Synthetic demo data ──────────────────────────────────────────────────────
 
 const SYNTH: Record<string, {
   student: { name: string; email: string; year: number; dept: string; enrollment_date: string };
@@ -160,14 +177,14 @@ const SYNTH: Record<string, {
     rootCause: {
       primary_cause: 'Academic Difficulty', confidence: 88,
       factors: [
-        'Attendance declined 82% \u2192 48% over 4 weeks (\u218834%)',
-        'Quiz scores dropped: 78% average \u2192 52% (\u218826%)',
+        'Attendance declined 82% → 48% over 4 weeks (↓34%)',
+        'Quiz scores dropped: 78% average → 52% (↓26%)',
         'LMS time-on-task: INCREASED (studying more but performing worse)',
         'This pattern suggests content difficulty, not disengagement',
       ],
       alt_causes: [
         { cause: 'Financial hardship', confidence: 8, reason: 'No fee payment delays detected' },
-        { cause: 'Health issues', confidence: 4, reason: 'LMS logins still present \u2014 not fully withdrawn' },
+        { cause: 'Health issues', confidence: 4, reason: 'LMS logins still present — not fully withdrawn' },
       ],
       explanation: 'Over the past 4 weeks, this student\'s attendance dropped significantly and academic performance declined sharply. Quiz scores dropped despite an increase in time spent on the LMS, which suggests the student is struggling with course content rather than avoiding classes. Financial and health issues appear unlikely based on available signals.',
       recommendation: 'Academic Tutoring + Peer Mentoring',
@@ -184,9 +201,9 @@ const SYNTH: Record<string, {
     rootCause: {
       primary_cause: 'Low Engagement', confidence: 65,
       factors: [
-        'LMS logins dropped from 7/week to 2/week (\u218771%)',
+        'LMS logins dropped from 7/week to 2/week (↓71%)',
         'Assignment submission rate: 60% (below 80% threshold)',
-        'Attendance stable at 70% \u2014 not the primary driver',
+        'Attendance stable at 70% — not the primary driver',
       ],
       alt_causes: [
         { cause: 'Academic difficulty', confidence: 20, reason: 'Scores within passing range' },
@@ -201,16 +218,20 @@ const SYNTH: Record<string, {
   },
 };
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default async function StudentProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
+  // ── Fetch student
   const { data: studentRaw } = await supabase
     .from('students')
     .select('id, name, email, year, enrollment_date, departments(name)')
     .eq('id', id)
     .single();
 
+  // ── Attendance (last 8 weeks)
   const eightWeeksAgo = new Date();
   eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
 
@@ -221,6 +242,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     .gte('date', eightWeeksAgo.toISOString().slice(0, 10))
     .order('date', { ascending: true });
 
+  // ── Academics (last 4 weeks)
   const fourWeeksAgo = new Date();
   fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
 
@@ -231,6 +253,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     .gte('date', fourWeeksAgo.toISOString().slice(0, 10))
     .order('date', { ascending: true });
 
+  // ── Engagement (last 4 weeks)
   const { data: engagement } = await supabase
     .from('engagement')
     .select('date, lms_logins, assignments_submitted, time_on_task')
@@ -238,6 +261,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     .gte('date', fourWeeksAgo.toISOString().slice(0, 10))
     .order('date', { ascending: true });
 
+  // ── Risk
   const { data: riskRows } = await supabase
     .from('risk_assessments')
     .select('risk_score, tier, trajectory, created_at')
@@ -245,6 +269,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     .order('created_at', { ascending: false })
     .limit(1);
 
+  // ── Root cause
   const { data: rcRows } = await supabase
     .from('root_cause_assessments')
     .select('primary_cause, confidence, factors, created_at')
@@ -252,12 +277,14 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     .order('created_at', { ascending: false })
     .limit(1);
 
+  // ── Interventions
   const { data: interventions } = await supabase
     .from('interventions')
     .select('id, type, status, due_date, outcome, created_at')
     .eq('student_id', id)
     .order('created_at', { ascending: false });
 
+  // ── Resolve demo data if DB empty
   const synth = SYNTH[id] ?? SYNTH.default;
   const useDemo = !studentRaw;
 
@@ -273,19 +300,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
       }
     : synth.student;
 
-  const risk = riskRows?.[0]
-    ? { risk_score: riskRows[0].risk_score, tier: riskRows[0].tier as RiskTier, trajectory: riskRows[0].trajectory as RiskTrajectory }
-    : synth.risk;
-
-  const rc = rcRows?.[0] ?? null;
-  const rootCause = synth.rootCause;
-
-  if (rc) {
-    rootCause.primary_cause = rc.primary_cause;
-    rootCause.confidence = rc.confidence;
-    if (rc.factors?.length) rootCause.factors = rc.factors;
-  }
-
+  // ── Compute metrics from DB data or synthetic
   let attendNow: number | null = null;
   let attendPrev: number | null = null;
 
@@ -336,8 +351,52 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     assPrev = synth.metrics.assPrev;
   }
 
+  // ── Multi-Factor Risk Assessment Engine Calculation
+  const riskAssessment = calculateRiskScore({
+    attendance: {
+      currentRate: attendNow ?? undefined,
+      previousRate: attendPrev ?? undefined,
+    },
+    academics: {
+      currentScore: gpaNow ?? undefined,
+      previousScore: gpaPrev ?? undefined,
+    },
+    engagement: {
+      lmsLogins: lmsNow ?? undefined,
+      previousLmsLogins: lmsPrev ?? undefined,
+      assignmentsSubmitted: assNow ?? undefined,
+      assignmentsTotal: assTotal,
+    },
+  });
+
+  const risk = riskRows?.[0]
+    ? {
+        risk_score: riskRows[0].risk_score,
+        tier: riskRows[0].tier as RiskTier,
+        trajectory: riskRows[0].trajectory as RiskTrajectory,
+        confidence: riskAssessment.confidence,
+        contributingFactors: riskAssessment.contributingFactors,
+      }
+    : {
+        risk_score: riskAssessment.score,
+        tier: riskAssessment.tier,
+        trajectory: riskAssessment.trajectory,
+        confidence: riskAssessment.confidence,
+        contributingFactors: riskAssessment.contributingFactors,
+      };
+
+  const rc = rcRows?.[0] ?? null;
+  const rootCause = synth.rootCause; // always shown; DB overrides primary_cause + confidence if available
+
+  if (rc) {
+    rootCause.primary_cause = rc.primary_cause;
+    rootCause.confidence = rc.confidence;
+    if (rc.factors?.length) rootCause.factors = rc.factors;
+  }
+
   const ivList = (interventions && interventions.length > 0) ? interventions : synth.interventions;
 
+  // ── Alerts
   const attendAlert = attendNow !== null && attendNow < 70;
   const gpaAlert    = gpaNow    !== null && gpaPrev !== null && gpaNow < gpaPrev - 5;
   const lmsAlert    = lmsNow    !== null && lmsPrev !== null && lmsNow  < lmsPrev - 2;
@@ -347,6 +406,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
 
   return (
     <div className="min-h-screen">
+      {/* Top nav */}
       <div className="border-b border-white/8 bg-slate-950/60 backdrop-blur sticky top-0 z-40">
         <div className="max-w-5xl mx-auto px-4 md:px-8 py-3 flex items-center gap-3">
           <Link
@@ -365,6 +425,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
 
       <div className="max-w-5xl mx-auto px-4 md:px-8 py-8 space-y-10">
 
+        {/* ═══ SECTION 1: STUDENT INFO ═══════════════════════════════════════ */}
         <Section title="Student Information" icon={<User className="w-4 h-4" />}>
           <div className="glass-panel rounded-2xl px-6 py-5 flex flex-wrap gap-6 items-center">
             <div className="w-12 h-12 rounded-full bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center shrink-0">
@@ -386,6 +447,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           </div>
         </Section>
 
+        {/* ═══ SECTION 2: CURRENT INDICATORS ════════════════════════════════ */}
         <Section title="Current Indicators" icon={<Activity className="w-4 h-4" />}>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
@@ -407,33 +469,80 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           </div>
         </Section>
 
+        {/* ═══ SECTION 3: SUPPORT ASSESSMENT ════════════════════════════════ */}
         <Section title="Support Assessment" icon={<AlertTriangle className="w-4 h-4" />}>
-          <div className="glass-panel rounded-2xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Risk Score</span>
-              <div className="text-5xl font-extrabold text-white tabular-nums">
-                {pct(scoreBarWidth)}
+          <div className="glass-panel rounded-2xl p-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Risk score */}
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Risk Score</span>
+                  <span className="text-xs text-indigo-400 font-medium">{risk.confidence}% confidence</span>
+                </div>
+                <div className="text-5xl font-extrabold text-white tabular-nums">
+                  {pct(scoreBarWidth)}
+                </div>
+                <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden">
+                  <div className={`h-full rounded-full ${TIER_BAR[risk.tier]}`} style={{ width: `${scoreBarWidth}%` }} />
+                </div>
+                <span className="text-xs text-slate-500">Risk Score: {risk.risk_score.toFixed(2)} / 1.00</span>
               </div>
-              <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden">
-                <div className={`h-full rounded-full ${TIER_BAR[risk.tier]}`} style={{ width: `${scoreBarWidth}%` }} />
+
+              {/* Support tier */}
+              <div className="flex flex-col gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Support Tier</span>
+                <div className={`inline-flex px-5 py-3 rounded-xl text-2xl font-extrabold border ${TIER_BADGE[risk.tier]}`}>
+                  {risk.tier}
+                </div>
+                <span className="text-xs text-slate-500">Action priority level</span>
               </div>
-              <span className="text-xs text-slate-500">Raw score: {risk.risk_score.toFixed(2)}</span>
-            </div>
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Support Tier</span>
-              <div className={`inline-flex px-5 py-3 rounded-xl text-2xl font-extrabold border ${TIER_BADGE[risk.tier]}`}>
-                {risk.tier}
+
+              {/* Trajectory */}
+              <div className="flex flex-col gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trajectory</span>
+                <TrajectoryBadge trajectory={risk.trajectory} />
+                <span className="text-xs text-slate-500">Multi-period trend analysis</span>
               </div>
             </div>
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trajectory</span>
-              <TrajectoryBadge trajectory={risk.trajectory} />
-            </div>
+
+            {/* Contributing factors multi-factor breakdown */}
+            {risk.contributingFactors && (
+              <div className="pt-4 border-t border-white/5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
+                  Multi-Factor Engine Component Breakdown
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { name: 'Attendance (30%)', val: risk.contributingFactors.attendance },
+                    { name: 'Academic (35%)', val: risk.contributingFactors.academic },
+                    { name: 'Engagement (20%)', val: risk.contributingFactors.engagement },
+                    { name: 'Trend (15%)', val: risk.contributingFactors.trend },
+                  ].map(factor => (
+                    <div key={factor.name} className="bg-slate-900/60 rounded-xl p-3 border border-white/5">
+                      <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+                        <span>{factor.name}</span>
+                        <span className="font-mono text-white">{(factor.val * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            factor.val > 0.65 ? 'bg-red-500' : factor.val > 0.40 ? 'bg-amber-500' : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${Math.round(factor.val * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </Section>
 
+        {/* ═══ SECTION 4: ROOT CAUSE CLASSIFICATION ══════════════════════════ */}
         <Section title="Root Cause Classification" icon={<Brain className="w-4 h-4" />}>
           <div className="space-y-4">
+            {/* Primary cause highlight */}
             <div className="glass-panel rounded-2xl p-6 border-l-4 border-indigo-500">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Primary likely cause</p>
               <p className="text-xl font-bold text-white">
@@ -443,17 +552,21 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                 </span>
               </p>
             </div>
+
+            {/* Contributing factors */}
             <div className="glass-panel rounded-2xl p-6">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Contributing factors</p>
               <ul className="space-y-2">
                 {rootCause.factors.map((f, i) => (
                   <li key={i} className="flex gap-2 text-sm text-slate-300">
-                    <span className="text-indigo-400 mt-0.5 shrink-0">&bull;</span>
+                    <span className="text-indigo-400 mt-0.5 shrink-0">•</span>
                     {f}
                   </li>
                 ))}
               </ul>
             </div>
+
+            {/* Alternative causes */}
             <div className="glass-panel rounded-2xl p-6">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Alternative causes considered</p>
               <div className="space-y-3">
@@ -473,12 +586,14 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           </div>
         </Section>
 
+        {/* ═══ SECTION 5: HUMAN-READABLE EXPLANATION ═════════════════════════ */}
         <Section title="Plain-Language Summary" icon={<FileText className="w-4 h-4" />}>
           <div className="glass-panel rounded-2xl p-6">
             <p className="text-slate-300 text-sm leading-relaxed">{rootCause.explanation}</p>
           </div>
         </Section>
 
+        {/* ═══ SECTION 6: RECOMMENDED INTERVENTION ═══════════════════════════ */}
         <Section title="Recommended Intervention" icon={<Lightbulb className="w-4 h-4" />}>
           <div className="glass-panel rounded-2xl p-6 flex flex-wrap items-center justify-between gap-6">
             <div className="space-y-2">
@@ -503,6 +618,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           </div>
         </Section>
 
+        {/* ═══ SECTION 7: INTERVENTION HISTORY ═══════════════════════════════ */}
         <Section title="Intervention History" icon={<Clock className="w-4 h-4" />}>
           <div className="glass-panel rounded-2xl px-6 py-2">
             {ivList.length === 0 ? (
