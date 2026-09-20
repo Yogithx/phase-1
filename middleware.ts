@@ -1,7 +1,43 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+const DEMO_ROLES = ['admin', 'faculty', 'counselor'] as const;
+type DemoRole = typeof DEMO_ROLES[number];
+
+const ALLOWED_ROUTES: Record<DemoRole, string> = {
+  admin: '/dashboard/admin',
+  faculty: '/dashboard/faculty',
+  counselor: '/dashboard/counselor',
+};
+
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // ── DEMO MODE ─────────────────────────────────────────────────────────────
+  const demoRole = request.cookies.get('ess-demo-role')?.value as DemoRole | undefined;
+  const isDemoSession = demoRole && DEMO_ROLES.includes(demoRole);
+
+  if (isDemoSession) {
+    if (pathname === '/login') {
+      const url = request.nextUrl.clone();
+      url.pathname = ALLOWED_ROUTES[demoRole];
+      return NextResponse.redirect(url);
+    }
+    if (pathname.startsWith('/student/')) {
+      return NextResponse.next();
+    }
+    if (pathname.startsWith('/dashboard')) {
+      if (!pathname.startsWith(ALLOWED_ROUTES[demoRole])) {
+        const url = request.nextUrl.clone();
+        url.pathname = ALLOWED_ROUTES[demoRole];
+        return NextResponse.redirect(url);
+      }
+      return NextResponse.next();
+    }
+    return NextResponse.next();
+  }
+  // ── END DEMO MODE ──────────────────────────────────────────────────────────
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -25,8 +61,13 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const { pathname } = request.nextUrl;
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    // Supabase not configured — fall through to redirect
+  }
 
   if (pathname.startsWith('/dashboard')) {
     if (!user) {
@@ -35,14 +76,9 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
     const role = user.user_metadata?.role as string | undefined;
-    const allowedRoutes: Record<string, string> = {
-      admin: '/dashboard/admin',
-      faculty: '/dashboard/faculty',
-      counselor: '/dashboard/counselor',
-    };
-    if (role && !pathname.startsWith(allowedRoutes[role] ?? '')) {
+    if (role && !pathname.startsWith(ALLOWED_ROUTES[role as DemoRole] ?? '')) {
       const url = request.nextUrl.clone();
-      url.pathname = allowedRoutes[role] ?? '/login';
+      url.pathname = ALLOWED_ROUTES[role as DemoRole] ?? '/login';
       return NextResponse.redirect(url);
     }
   }
@@ -59,5 +95,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login'],
+  matcher: ['/dashboard/:path*', '/login', '/student/:path*'],
 };
